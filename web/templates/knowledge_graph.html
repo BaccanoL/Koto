@@ -1,0 +1,679 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Koto 智能文件大脑 - 知识图谱</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        /* 侧边栏 */
+        .sidebar {
+            width: 320px;
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            padding: 20px;
+            overflow-y: auto;
+            box-shadow: 2px 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .sidebar h2 {
+            font-size: 24px;
+            margin-bottom: 20px;
+            color: #667eea;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .section h3 {
+            font-size: 16px;
+            margin-bottom: 10px;
+            color: #555;
+            display: flex;
+            align-items: center;
+        }
+
+        .section h3::before {
+            content: "▸";
+            margin-right: 8px;
+            color: #667eea;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border-left: 4px solid #667eea;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+        }
+
+        .suggestion-card {
+            background: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 10px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .suggestion-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+        }
+
+        .suggestion-card .priority {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 8px;
+        }
+
+        .priority.high { background: #f44336; }
+        .priority.medium { background: #ff9800; }
+        .priority.low { background: #4caf50; }
+
+        .suggestion-card .title {
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .suggestion-card .description {
+            font-size: 12px;
+            color: #666;
+        }
+
+        .btn {
+            display: inline-block;
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+            text-align: center;
+            margin: 5px;
+        }
+
+        .btn:hover {
+            background: #5568d3;
+        }
+
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+
+        /* 主图谱区域 */
+        .graph-area {
+            flex: 1;
+            position: relative;
+            background: rgba(255, 255, 255, 0.9);
+            margin: 20px;
+            border-radius: 12px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
+        }
+
+        .graph-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+            z-index: 10;
+        }
+
+        .graph-controls button {
+            display: block;
+            width: 100%;
+            margin-bottom: 8px;
+        }
+
+        #graph {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* 节点和边的样式在SVG中定义 */
+        .node {
+            cursor: pointer;
+        }
+
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+        }
+
+        .node text {
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+        }
+
+        .node.file circle {
+            fill: #667eea;
+        }
+
+        .node.concept circle {
+            fill: #ff9800;
+        }
+
+        .node.selected circle {
+            stroke: #f44336;
+            stroke-width: 4px;
+        }
+
+        /* 提示框 */
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.3s;
+            max-width: 300px;
+            z-index: 100;
+        }
+
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            z-index: 1000;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* 滚动条样式 */
+        .sidebar::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        .sidebar::-webkit-scrollbar-track {
+            background: #f1f1f1;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb {
+            background: #888;
+            border-radius: 3px;
+        }
+
+        .sidebar::-webkit-scrollbar-thumb:hover {
+            background: #555;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏 -->
+        <div class="sidebar">
+            <h2>🧠 智能文件大脑</h2>
+
+            <!-- 统计信息 -->
+            <div class="section">
+                <h3>图谱统计</h3>
+                <div class="stat-card">
+                    <div class="stat-label">文件节点</div>
+                    <div class="stat-value" id="stat-files">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">概念节点</div>
+                    <div class="stat-value" id="stat-concepts">-</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-label">关联关系</div>
+                    <div class="stat-value" id="stat-edges">-</div>
+                </div>
+            </div>
+
+            <!-- 智能建议 -->
+            <div class="section">
+                <h3>💡 智能建议</h3>
+                <div id="suggestions-container">
+                    <p style="color: #999; font-size: 14px;">加载中...</p>
+                </div>
+                <button class="btn btn-small" onclick="refreshSuggestions()">刷新建议</button>
+            </div>
+
+            <!-- 热门概念 -->
+            <div class="section">
+                <h3>🔥 热门概念</h3>
+                <div id="concepts-container">
+                    <p style="color: #999; font-size: 14px;">加载中...</p>
+                </div>
+            </div>
+
+            <!-- 操作按钮 -->
+            <div class="section">
+                <h3>⚡ 快捷操作</h3>
+                <button class="btn" onclick="generateWeeklyReport()">生成周报</button>
+                <button class="btn" onclick="showWorkPatterns()">工作模式分析</button>
+                <button class="btn" onclick="exportGraph()">导出图谱</button>
+            </div>
+        </div>
+
+        <!-- 图谱可视化区域 -->
+        <div class="graph-area">
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <div>加载知识图谱...</div>
+            </div>
+
+            <div class="graph-controls">
+                <button class="btn btn-small" onclick="resetView()">重置视图</button>
+                <button class="btn btn-small" onclick="zoomIn()">放大</button>
+                <button class="btn btn-small" onclick="zoomOut()">缩小</button>
+            </div>
+
+            <svg id="graph"></svg>
+            <div class="tooltip" id="tooltip"></div>
+        </div>
+    </div>
+
+    <script>
+        // ===== 全局变量 =====
+        let graphData = null;
+        let simulation = null;
+        let svg = null;
+        let g = null;
+        let zoom = null;
+
+        // ===== 初始化 =====
+        window.onload = function() {
+            initGraph();
+            loadGraphData();
+            loadSuggestions();
+            loadTopConcepts();
+            loadStats();
+        };
+
+        // ===== 图谱初始化 =====
+        function initGraph() {
+            const width = document.getElementById('graph').clientWidth;
+            const height = document.getElementById('graph').clientHeight;
+
+            svg = d3.select('#graph')
+                .attr('width', width)
+                .attr('height', height);
+
+            // 添加缩放功能
+            zoom = d3.zoom()
+                .scaleExtent([0.1, 10])
+                .on('zoom', (event) => {
+                    g.attr('transform', event.transform);
+                });
+
+            svg.call(zoom);
+
+            // 创建主绘图组
+            g = svg.append('g');
+
+            // 创建力导向布局
+            simulation = d3.forceSimulation()
+                .force('link', d3.forceLink().id(d => d.id).distance(100))
+                .force('charge', d3.forceManyBody().strength(-300))
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .force('collision', d3.forceCollide().radius(30));
+        }
+
+        // ===== 加载图谱数据 =====
+        function loadGraphData() {
+            fetch('/api/knowledge-graph/data?max_nodes=100')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('loading').style.display = 'none';
+                    graphData = data;
+                    renderGraph(data);
+                })
+                .catch(error => {
+                    console.error('加载图谱失败:', error);
+                    document.getElementById('loading').innerHTML = 
+                        '<p style="color: red;">加载失败，请重试</p>';
+                });
+        }
+
+        // ===== 渲染图谱 =====
+        function renderGraph(data) {
+            // 清空现有内容
+            g.selectAll('*').remove();
+
+            // 绘制边
+            const link = g.append('g')
+                .selectAll('line')
+                .data(data.edges)
+                .join('line')
+                .attr('class', 'link')
+                .attr('stroke-width', d => Math.sqrt(d.weight * 2));
+
+            // 绘制节点
+            const node = g.append('g')
+                .selectAll('g')
+                .data(data.nodes)
+                .join('g')
+                .attr('class', d => `node ${d.type}`)
+                .call(d3.drag()
+                    .on('start', dragStarted)
+                    .on('drag', dragged)
+                    .on('end', dragEnded));
+
+            // 添加圆形
+            node.append('circle')
+                .attr('r', d => d.type === 'file' ? 10 : 7)
+                .on('mouseover', showTooltip)
+                .on('mouseout', hideTooltip)
+                .on('click', nodeClicked);
+
+            // 添加标签
+            node.append('text')
+                .text(d => d.label)
+                .attr('dx', 12)
+                .attr('dy', 4);
+
+            // 更新力导向模拟
+            simulation
+                .nodes(data.nodes)
+                .on('tick', ticked);
+
+            simulation.force('link')
+                .links(data.edges);
+
+            function ticked() {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                node
+                    .attr('transform', d => `translate(${d.x},${d.y})`);
+            }
+        }
+
+        // ===== 拖拽事件 =====
+        function dragStarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragEnded(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        // ===== 提示框 =====
+        function showTooltip(event, d) {
+            const tooltip = document.getElementById('tooltip');
+            tooltip.style.opacity = 1;
+            tooltip.style.left = (event.pageX + 10) + 'px';
+            tooltip.style.top = (event.pageY - 10) + 'px';
+            
+            let content = `<strong>${d.label}</strong><br>`;
+            content += `类型: ${d.type === 'file' ? '文件' : '概念'}<br>`;
+            
+            if (d.metadata) {
+                if (d.metadata.score) {
+                    content += `相关度: ${d.metadata.score.toFixed(2)}`;
+                }
+            }
+            
+            tooltip.innerHTML = content;
+        }
+
+        function hideTooltip() {
+            document.getElementById('tooltip').style.opacity = 0;
+        }
+
+        // ===== 节点点击 =====
+        function nodeClicked(event, d) {
+            console.log('节点点击:', d);
+            
+            // 高亮选中节点
+            d3.selectAll('.node').classed('selected', false);
+            d3.select(event.currentTarget.parentNode).classed('selected', true);
+            
+            // 如果是文件节点，加载邻居
+            if (d.type === 'file') {
+                const filePath = d.id.replace('file:', '');
+                loadNeighbors(filePath);
+            }
+        }
+
+        // ===== 加载邻居节点 =====
+        function loadNeighbors(filePath) {
+            fetch('/api/knowledge-graph/neighbors', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({file_path: filePath, depth: 1})
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (!data.error) {
+                    renderGraph(data);
+                }
+            })
+            .catch(error => console.error('加载邻居失败:', error));
+        }
+
+        // ===== 视图控制 =====
+        function resetView() {
+            svg.transition().duration(750).call(
+                zoom.transform,
+                d3.zoomIdentity
+            );
+        }
+
+        function zoomIn() {
+            svg.transition().duration(300).call(
+                zoom.scaleBy,
+                1.3
+            );
+        }
+
+        function zoomOut() {
+            svg.transition().duration(300).call(
+                zoom.scaleBy,
+                0.7
+            );
+        }
+
+        // ===== 加载统计信息 =====
+        function loadStats() {
+            fetch('/api/knowledge-graph/stats')
+                .then(response => response.json())
+                .then(data => {
+                    document.getElementById('stat-files').textContent = data.total_files || 0;
+                    document.getElementById('stat-concepts').textContent = data.total_concepts || 0;
+                    document.getElementById('stat-edges').textContent = data.file_relation_edges || 0;
+                })
+                .catch(error => console.error('加载统计失败:', error));
+        }
+
+        // ===== 加载建议 =====
+        function loadSuggestions() {
+            fetch('/api/suggestions/pending?limit=3')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('suggestions-container');
+                    if (data.suggestions && data.suggestions.length > 0) {
+                        container.innerHTML = data.suggestions.map(s => `
+                            <div class="suggestion-card" onclick="applySuggestion(${s.id})">
+                                <div class="title">
+                                    <span class="priority ${s.priority}"></span>
+                                    ${s.title}
+                                </div>
+                                <div class="description">${s.description}</div>
+                            </div>
+                        `).join('');
+                    } else {
+                        container.innerHTML = '<p style="color: #999;">暂无建议</p>';
+                    }
+                })
+                .catch(error => console.error('加载建议失败:', error));
+        }
+
+        function refreshSuggestions() {
+            fetch('/api/suggestions/generate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({force_regenerate: true})
+            })
+            .then(() => loadSuggestions())
+            .catch(error => console.error('刷新建议失败:', error));
+        }
+
+        function applySuggestion(id) {
+            if (confirm('确定要应用这个建议吗？')) {
+                fetch('/api/suggestions/apply', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({suggestion_id: id})
+                })
+                .then(() => {
+                    alert('建议已应用');
+                    loadSuggestions();
+                })
+                .catch(error => console.error('应用建议失败:', error));
+            }
+        }
+
+        // ===== 加载热门概念 =====
+        function loadTopConcepts() {
+            fetch('/api/concepts/top?limit=10')
+                .then(response => response.json())
+                .then(data => {
+                    const container = document.getElementById('concepts-container');
+                    if (data.concepts && data.concepts.length > 0) {
+                        container.innerHTML = data.concepts.map(c => `
+                            <div style="padding: 5px 0; font-size: 14px;">
+                                <strong>${c.concept}</strong>
+                                <span style="color: #999; font-size: 12px;">
+                                    (${c.document_count} 个文件)
+                                </span>
+                            </div>
+                        `).join('');
+                    } else {
+                        container.innerHTML = '<p style="color: #999;">暂无数据</p>';
+                    }
+                })
+                .catch(error => console.error('加载概念失败:', error));
+        }
+
+        // ===== 生成周报 =====
+        function generateWeeklyReport() {
+            if (confirm('生成本周工作报告？')) {
+                document.getElementById('loading').style.display = 'block';
+                fetch('/api/insights/generate-weekly', {method: 'POST'})
+                    .then(response => response.json())
+                    .then(data => {
+                        document.getElementById('loading').style.display = 'none';
+                        if (data.report) {
+                            alert('周报生成成功！');
+                            // 可以在这里显示报告或导出
+                            console.log(data.report);
+                        }
+                    })
+                    .catch(error => {
+                        document.getElementById('loading').style.display = 'none';
+                        console.error('生成周报失败:', error);
+                    });
+            }
+        }
+
+        // ===== 工作模式分析 =====
+        function showWorkPatterns() {
+            fetch('/api/behavior/work-patterns')
+                .then(response => response.json())
+                .then(data => {
+                    let message = '工作模式分析:\n\n';
+                    
+                    if (data.time_of_day && data.time_of_day.length > 0) {
+                        message += '活跃时段:\n';
+                        data.time_of_day.forEach(p => {
+                            message += `- ${p.period}: ${p.frequency} 次\n`;
+                        });
+                    }
+                    
+                    alert(message);
+                })
+                .catch(error => console.error('加载工作模式失败:', error));
+        }
+
+        // ===== 导出图谱 =====
+        function exportGraph() {
+            const data = JSON.stringify(graphData, null, 2);
+            const blob = new Blob([data], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'knowledge-graph.json';
+            a.click();
+        }
+    </script>
+</body>
+</html>

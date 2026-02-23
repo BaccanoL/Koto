@@ -1,0 +1,770 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Koto (言) - AI Assistant</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', filename='assets/koto_icon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        body.loading { background: #f5f7fb; }
+        #startupSplash {
+            position: fixed;
+            inset: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            gap: 12px;
+            background: #f5f7fb;
+            color: #0c1526;
+            z-index: 9999;
+            font-family: 'Noto Sans SC', 'Segoe UI', sans-serif;
+        }
+        #startupSplash .spinner {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 3px solid #dbe2ef;
+            border-top-color: #338bff;
+            animation: splashSpin 0.9s linear infinite;
+        }
+        @keyframes splashSpin { to { transform: rotate(360deg); } }
+        #startupSplash.hidden { opacity: 0; pointer-events: none; transition: opacity 0.2s ease; }
+    </style>
+    <link rel="preconnect" href="https://cdn.bootcdn.net" crossorigin>
+    <!-- Speed up: Removed Google Fonts and relying on system fonts -->
+    <style>
+        /* Fallback fonts */
+        body { font-family: 'Noto Sans SC', 'Microsoft YaHei', 'Segoe UI', system-ui, sans-serif !important; }
+        code, pre { font-family: 'JetBrains Mono', 'Consolas', 'Fira Code', monospace !important; }
+    </style>
+    <!-- VS Code 风格的代码高亮主题 (BootCDN) -->
+    <link rel="preload" as="style" href="https://cdn.bootcdn.net/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css" onload="this.rel='stylesheet'">
+    <noscript>
+        <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/highlight.js/11.9.0/styles/vs2015.min.css">
+    </noscript>
+    <!-- Removed blocking google fonts -->
+    <script defer src="https://cdn.bootcdn.net/ajax/libs/highlight.js/11.9.0/highlight.min.js"></script>
+    <script defer src="https://cdn.bootcdn.net/ajax/libs/marked/12.0.0/marked.min.js"></script>
+    <!-- KaTeX 数学公式渲染 -->
+    <link rel="stylesheet" href="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.css">
+    <script defer src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/katex.min.js"></script>
+    <script defer src="https://cdn.bootcdn.net/ajax/libs/KaTeX/0.16.9/contrib/auto-render.min.js"></script>
+    <!-- Mermaid 图表渲染 -->
+    <script defer src="https://cdn.bootcdn.net/ajax/libs/mermaid/10.9.0/mermaid.min.js"></script>
+</head>
+<body class="loading">
+    <div id="startupSplash">
+        <div class="spinner"></div>
+        <div>正在启动 Koto...</div>
+    </div>
+    <div class="bg-texture">
+        <div class="glow glow-1"></div>
+        <div class="glow glow-2"></div>
+        <div class="grid"></div>
+    </div>
+    <div class="app-shell chatgpt-app">
+        <aside class="nav-rail chatgpt-sidebar">
+            <div class="nav-brand">
+                <div class="logo redesigned-logo" onclick="goToWelcome()" title="返回首页">
+                    <span class="logo-gradient-circle">
+                        <span class="logo-icon">言</span>
+                    </span>
+                    <div class="logo-copy">
+                        <span class="logo-text">Koto</span>
+                        <span class="logo-sub">Local · Gemini</span>
+                    </div>
+                </div>
+                <button class="pill-btn" onclick="showNewSessionModal()">+ 新对话</button>
+            </div>
+
+            <div class="nav-section">
+                <div class="nav-section-head">
+                    <span>对话</span>
+                    <button class="ghost-btn" onclick="loadSessions()" title="刷新列表">↻</button>
+                </div>
+                <div class="sessions-list" id="sessionsList"></div>
+            </div>
+
+            <div class="nav-footer">
+                <!-- 用户信息（云模式） -->
+                <div id="auth-user-bar" style="display:none;padding:8px 12px;margin-bottom:8px;border-radius:10px;background:var(--bg-tertiary);font-size:13px;">
+                    <span id="auth-user-name" style="color:var(--text-secondary);"></span>
+                    <button id="auth-logout-btn" onclick="KotoAuth.logout()" style="float:right;background:none;border:none;color:var(--accent-primary);cursor:pointer;font-size:12px;" title="退出登录">退出</button>
+                </div>
+                <div class="status-indicator" id="statusIndicator">
+                    <span class="status-dot"></span>
+                    <div class="status-info">
+                        <span class="status-text">检查中...</span>
+                    </div>
+                    <button class="icon-btn-mini" onclick="checkStatus()" title="刷新">🔄</button>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content chatgpt-main">
+            <header class="topbar">
+                <div class="title-stack">
+                    <p class="eyebrow">Koto Studio · Gemini + 本地</p>
+                    <h1 id="chatTitle">选择或创建对话</h1>
+                    <p class="subtitle">对话、写作、调试、浏览、文件编辑一体化</p>
+                </div>
+                <div class="top-actions">
+                    <button class="ghost-btn" onclick="switchToMiniMode()" title="切换到简洁模式">▣ 简洁</button>
+                    <button class="ghost-btn" onclick="toggleWorkspace()" title="浏览工作区">📂 工作区</button>
+                    <button class="ghost-btn" onclick="openWorkspaceFolder()" title="打开工作区文件夹">🗁 打开</button>
+                    <button class="ghost-btn notification-btn" onclick="openNotificationCenter()" title="通知中心">
+                        🔔 通知
+                        <span class="badge" id="notificationBadge" style="display: none;">0</span>
+                    </button>
+                    <button class="ghost-btn" onclick="openTriggerPanel()" title="主动触发器">🧭 触发器</button>
+                    <button class="ghost-btn" onclick="openBatchJobsPanel()" title="批量任务">📋 批量</button>
+                    <button class="ghost-btn" onclick="openSettings()" title="设置">⚙️ 设置</button>
+                    <button class="danger-btn" onclick="deleteCurrentSession()" title="删除对话">🗑 删除</button>
+                </div>
+            </header>
+
+            <div class="capability-toolbar" id="capabilityToolbar">
+                <div class="toolbar-title">任务模式</div>
+                <div class="capability-chips">
+                    <div class="capability capability-chip" data-task="CHAT">
+                        <span class="cap-icon">💬</span><span>对话</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="CODER">
+                        <span class="cap-icon">💻</span><span>编程</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="SYSTEM">
+                        <span class="cap-icon">🖥️</span><span>系统</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="WEB_SEARCH">
+                        <span class="cap-icon">🌐</span><span>搜索</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="FILE_OP">
+                        <span class="cap-icon">📂</span><span>文件</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="PAINTER">
+                        <span class="cap-icon">🎨</span><span>创作</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="AGENT">
+                        <span class="cap-icon">🤖</span><span>Agent</span>
+                    </div>
+                    <div class="capability capability-chip" data-task="VOICE">
+                        <span class="cap-icon">🎤</span><span>语音</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="main-grid single-column">
+                <section class="chat-pane">
+                    <div class="chat-messages" id="chatMessages" ondragover="handleDragOver(event)" ondrop="handleDrop(event)" ondragleave="handleDragLeave(event)">
+                        <div class="drag-overlay" id="dragOverlay" style="display: none;">
+                            <div class="drag-content">
+                                <div class="drag-icon">📁</div>
+                                <div class="drag-text">将文件拖放到这里上传</div>
+                            </div>
+                        </div>
+                        
+                        <div class="welcome-screen" id="welcomeScreen">
+                            <div class="welcome-card">
+                                <div class="welcome-logo">言</div>
+                                <div class="welcome-copy">
+                                    <h2>欢迎使用 Koto</h2>
+                                    <p>更轻、更快、更专注的本地 + 云端双引擎助手</p>
+                                </div>
+                            </div>
+                            <div class="welcome-grid">
+                                <div class="welcome-block full-width">
+                                    <div class="block-title">快速开始</div>
+                                    <div class="hint-list">
+                                        <span>💬 <strong>对话</strong> — 自然交流，获取信息和建议</span>
+                                        <span>💻 <strong>编程</strong> — 代码生成、调试与重构</span>
+                                        <span>🌐 <strong>搜索</strong> — 实时网页搜索与内容总结</span>
+                                        <span>🎨 <strong>创作</strong> — AI 生成图片与创意设计</span>
+                                        <span>📂 <strong>文件</strong> — 本地文件读取、编辑与协作</span>
+                                        <span>🎤 <strong>语音</strong> — 语音输入、识别与指令</span>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+            </div>
+
+            <div class="chat-input-container">
+                <div class="file-preview" id="filePreview" style="display: none;">
+                    <div class="file-list" id="fileList"></div>
+                    <button class="remove-all-files" onclick="removeFile()" title="清除所有文件">清空</button>
+                </div>
+                <form class="chat-input-form" onsubmit="sendMessage(event)">
+                    <label class="file-upload-btn" title="附加文件">
+                        <input type="file" id="fileInput" onchange="handleFileSelect(event)" multiple hidden>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48"></path>
+                        </svg>
+                    </label>
+                    <button type="button" class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="语音输入">
+                        <span class="voice-icon">🎙️</span>
+                    </button>
+                    <textarea 
+                        id="messageInput" 
+                        placeholder="输入消息或点击🎙️语音输入..." 
+                        rows="1"
+                        onkeydown="handleKeyDown(event)"
+                        oninput="autoResize(this)"
+                    ></textarea>
+                    <div class="input-thinking" id="inputThinking" style="display:none;">
+                        <span class="spinner"></span>
+                        <span id="thinkingText">Koto 正在思考...</span>
+                        <span id="currentModel" class="thinking-model"></span>
+                    </div>
+                    <button type="submit" class="send-btn" id="sendBtn" title="发送">
+                        <svg class="send-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <line x1="22" y1="2" x2="11" y2="13"></line>
+                            <polygon points="22 2 15 22 11 13 2 9 22 2"></polygon>
+                        </svg>
+                        <svg class="stop-icon" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" stroke="none" style="display: none;">
+                            <rect x="6" y="6" width="12" height="12" rx="2"></rect>
+                        </svg>
+                    </button>
+                </form>
+                <p class="input-hint">Enter 发送 · Shift+Enter 换行 · 可拖拽/上传文件</p>
+            </div>
+        </main>
+
+        <aside class="workspace-panel" id="workspacePanel">
+            <div class="panel-header">
+                <h3>工作区文件</h3>
+                <button class="close-panel" onclick="toggleWorkspace()">×</button>
+            </div>
+            <div class="workspace-files" id="workspaceFiles"></div>
+        </aside>
+
+        <aside class="settings-panel" id="settingsPanel">
+            <div class="panel-header">
+                <h3>⚙️ 设置</h3>
+                <button class="close-panel" onclick="closeSettings()">×</button>
+            </div>
+            <div class="settings-content">
+                <div class="settings-section">
+                    <h4>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        存储路径
+                    </h4>
+                    <div class="setting-item">
+                        <label>工作区目录</label>
+                        <div class="path-input">
+                            <input type="text" id="settingWorkspaceDir" readonly>
+                            <button class="browse-btn" onclick="browseFolder('workspace_dir')">浏览</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>文档目录</label>
+                        <div class="path-input">
+                            <input type="text" id="settingDocumentsDir" readonly>
+                            <button class="browse-btn" onclick="browseFolder('documents_dir')">浏览</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>图片目录</label>
+                        <div class="path-input">
+                            <input type="text" id="settingImagesDir" readonly>
+                            <button class="browse-btn" onclick="browseFolder('images_dir')">浏览</button>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>对话历史目录</label>
+                        <div class="path-input">
+                            <input type="text" id="settingChatsDir" readonly>
+                            <button class="browse-btn" onclick="browseFolder('chats_dir')">浏览</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Memory Section -->
+                <div class="settings-section">
+                    <h4>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path>
+                        </svg>
+                        长期记忆 (Long-term Memory)
+                    </h4>
+                    <p class="setting-desc">Koto 会记住这些偏好和事实，并在对话中自动引用。</p>
+                    <div class="setting-item">
+                        <div class="memory-input-group">
+                            <input type="text" id="newMemoryInput" placeholder="输入你想让 Koto 记住的事实或偏好...">
+                            <button class="btn-primary btn-sm" onclick="addNewMemory()">添加</button>
+                        </div>
+                    </div>
+                    <div class="memory-list" id="memoryList">
+                        <div class="memory-empty">正在加载记忆...</div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="5"></circle>
+                            <line x1="12" y1="1" x2="12" y2="3"></line>
+                            <line x1="12" y1="21" x2="12" y2="23"></line>
+                            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                            <line x1="1" y1="12" x2="3" y2="12"></line>
+                            <line x1="21" y1="12" x2="23" y2="12"></line>
+                            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+                        </svg>
+                        外观
+                    </h4>
+                    <div class="setting-item">
+                        <label>主题</label>
+                        <div class="theme-selector" id="themeSelector">
+                            <div class="theme-option" data-theme="dark" onclick="selectTheme('dark')">
+                                <div class="theme-preview dark-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>深色</span>
+                            </div>
+                            <div class="theme-option" data-theme="light" onclick="selectTheme('light')">
+                                <div class="theme-preview light-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>浅色</span>
+                            </div>
+                            <div class="theme-option" data-theme="ocean" onclick="selectTheme('ocean')">
+                                <div class="theme-preview ocean-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>海洋</span>
+                            </div>
+                            <div class="theme-option" data-theme="forest" onclick="selectTheme('forest')">
+                                <div class="theme-preview forest-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>森林</span>
+                            </div>
+                            <div class="theme-option" data-theme="sunset" onclick="selectTheme('sunset')">
+                                <div class="theme-preview sunset-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>日落</span>
+                            </div>
+                            <div class="theme-option" data-theme="lavender" onclick="selectTheme('lavender')">
+                                <div class="theme-preview lavender-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>薰衣草</span>
+                            </div>
+                            <div class="theme-option" data-theme="midnight" onclick="selectTheme('midnight')">
+                                <div class="theme-preview midnight-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>午夜</span>
+                            </div>
+                            <div class="theme-option" data-theme="auto" onclick="selectTheme('auto')">
+                                <div class="theme-preview auto-preview">
+                                    <div class="preview-sidebar"></div>
+                                    <div class="preview-content"></div>
+                                </div>
+                                <span>跟随系统</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2a4 4 0 0 1 4 4v2a4 4 0 0 1-8 0V6a4 4 0 0 1 4-4z"></path>
+                            <path d="M16 14v6a2 2 0 0 1-2 2h-4a2 2 0 0 1-2-2v-6"></path>
+                            <path d="M12 14v8"></path>
+                        </svg>
+                        AI 设置
+                    </h4>
+                    <div class="setting-item">
+                        <label>默认模型</label>
+                        <select id="settingModel" onchange="onModelChange(this.value)">
+                            <option value="auto">🤖 Auto (智能选择)</option>
+                            <option value="gemini-3-flash-preview">⚡ Gemini 3 Flash (快速)</option>
+                            <option value="gemini-3-pro-preview">🚀 Gemini 3 Pro (智能)</option>
+                            <option value="nano-banana-pro-preview">🎨 Nano Banana Pro (图像)</option>
+                            <option value="gemini-2.5-flash">⚡ Gemini 2.5 Flash</option>
+                            <option value="gemini-2.5-pro">🚀 Gemini 2.5 Pro</option>
+                        </select>
+                        <p class="setting-hint">Auto 会根据任务类型自动选择最合适的模型</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="toggle-row">
+                            <span class="toggle-label">显示思考过程</span>
+                            <label class="toggle">
+                                <input type="checkbox" id="settingShowThinking" onchange="updateSetting('ai', 'show_thinking', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">开启后可以看到 AI 的推理过程和决策步骤</p>
+                    </div>
+                    <div class="setting-item">
+                        <div class="toggle-row">
+                            <span class="toggle-label">语音自动上传模式</span>
+                            <label class="toggle">
+                                <input type="checkbox" id="settingVoiceAutoMode" checked onchange="updateSetting('ai', 'voice_auto_mode', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                        <p class="setting-hint">说完后自动识别上传，无需点击确认</p>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h4>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="2" y1="12" x2="22" y2="12"></line>
+                            <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path>
+                        </svg>
+                        网络代理
+                    </h4>
+                    <div class="setting-item">
+                        <div class="toggle-row">
+                            <span class="toggle-label">启用代理</span>
+                            <label class="toggle">
+                                <input type="checkbox" id="settingProxyEnabled" onchange="updateSetting('proxy', 'enabled', this.checked)">
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="setting-item">
+                        <label>代理地址</label>
+                        <input type="text" id="settingManualProxy" placeholder="http://127.0.0.1:7890" 
+                               onchange="updateSetting('proxy', 'manual_proxy', this.value)">
+                        <p class="setting-hint">留空则使用系统代理设置</p>
+                    </div>
+                </div>
+
+                <div class="settings-actions">
+                    <button class="btn-secondary" onclick="resetSettings()">重置默认</button>
+                    <button class="btn-primary" onclick="closeSettings()">完成</button>
+                </div>
+            </div>
+        </aside>
+
+        <!-- ==================== Artifacts 面板 ==================== -->
+        <aside class="artifacts-panel" id="artifactsPanel">
+            <div class="artifacts-header">
+                <div class="artifacts-title-row">
+                    <h3 id="artifactsTitle">Artifact</h3>
+                    <div class="artifacts-actions">
+                        <button class="artifact-tab-btn active" data-tab="preview" onclick="switchArtifactTab('preview')" title="预览">👁 预览</button>
+                        <button class="artifact-tab-btn" data-tab="code" onclick="switchArtifactTab('code')" title="代码">⟨/⟩ 代码</button>
+                        <button class="ghost-btn artifact-copy-all" onclick="copyArtifactContent()" title="复制全部">📋</button>
+                        <button class="ghost-btn artifact-download" onclick="downloadArtifact()" title="下载">⬇</button>
+                        <button class="close-panel" onclick="closeArtifacts()">×</button>
+                    </div>
+                </div>
+                <div class="artifacts-meta">
+                    <span class="artifact-lang" id="artifactLang"></span>
+                    <span class="artifact-size" id="artifactSize"></span>
+                </div>
+            </div>
+            <div class="artifacts-body">
+                <div class="artifact-preview" id="artifactPreview"></div>
+                <div class="artifact-code" id="artifactCode" style="display:none;"></div>
+            </div>
+        </aside>
+    </div>
+
+    <!-- Loading Overlay -->
+
+    <!-- Setup Wizard Modal (首次启动引导) -->
+    <div class="modal-overlay" id="setupWizard">
+        <div class="modal setup-modal">
+            <div class="setup-header">
+                <div class="setup-logo">言</div>
+                <h2>欢迎使用 Koto</h2>
+                <p>您的本地 AI 助手，只需几步即可开始</p>
+            </div>
+            
+            <div class="setup-steps">
+                <!-- Step 1: API Key -->
+                <div class="setup-step" id="setupStep1">
+                    <div class="step-number">1</div>
+                    <div class="step-content">
+                        <h4>设置 Gemini API Key</h4>
+                        <p>从 <a href="https://aistudio.google.com/apikey" target="_blank">Google AI Studio</a> 获取免费的 API Key</p>
+                        <input type="password" id="setupApiKey" placeholder="粘贴您的 API Key...">
+                        <button class="btn-primary" onclick="saveApiKey()">验证并保存</button>
+                        <div class="step-status" id="step1Status"></div>
+                    </div>
+                </div>
+                
+                <!-- Step 2: Workspace -->
+                <div class="setup-step" id="setupStep2">
+                    <div class="step-number">2</div>
+                    <div class="step-content">
+                        <h4>选择工作区文件夹</h4>
+                        <p>Koto 生成的文件将保存在这里</p>
+                        <div class="path-input">
+                            <input type="text" id="setupWorkspacePath" placeholder="默认：当前目录/workspace">
+                            <button class="browse-btn" onclick="browseSetupFolder()">浏览</button>
+                        </div>
+                        <button class="btn-primary" onclick="saveWorkspace()">确认</button>
+                        <div class="step-status" id="step2Status"></div>
+                    </div>
+                </div>
+                
+                <!-- Step 3: Test -->
+                <div class="setup-step" id="setupStep3">
+                    <div class="step-number">3</div>
+                    <div class="step-content">
+                        <h4>测试连接</h4>
+                        <p>确保一切正常工作</p>
+                        <button class="btn-primary" onclick="testConnection()">🚀 开始测试</button>
+                        <div class="step-status" id="step3Status"></div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="setup-footer">
+                <button class="btn-secondary" onclick="skipSetup()">跳过设置</button>
+                <button class="btn-primary" id="startKotoBtn" onclick="finishSetup()" disabled>开始使用 Koto</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- New Session Modal -->
+    <div class="modal-overlay" id="newSessionModal">
+        <div class="modal">
+            <h3>新对话</h3>
+            <input type="text" id="newSessionName" placeholder="输入对话名称..." autofocus>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeModal()">取消</button>
+                <button class="btn-primary" onclick="confirmNewSession()">创建</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Folder Select Modal -->
+    <div class="modal-overlay" id="folderModal">
+        <div class="modal folder-modal">
+            <h3>选择文件夹</h3>
+            <div class="folder-browser">
+                <div class="current-path" id="currentBrowsePath"></div>
+                <div class="folder-list" id="folderList">
+                    <!-- Folders will be listed here -->
+                </div>
+            </div>
+            <div class="manual-path">
+                <input type="text" id="manualPathInput" placeholder="或直接输入路径...">
+            </div>
+            <div class="modal-actions">
+                <button class="btn-secondary" onclick="closeFolderModal()">取消</button>
+                <button class="btn-primary" onclick="confirmFolderSelect()">选择</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 语音功能面板 ==================== -->
+    <div class="voice-panel-modal" id="voicePanelModal" style="display: none;">
+        <div class="voice-panel">
+            <div class="panel-header">
+                <h3>🎤 语音功能</h3>
+                <button class="close-panel" onclick="closeVoicePanel()">×</button>
+            </div>
+            <div class="voice-panel-content">
+                <!-- 语音识别 -->
+                <div class="voice-section">
+                    <h4>🎙️ 语音识别</h4>
+                    <button class="btn-primary btn-lg" id="voiceRecognizeBtn" onclick="startVoiceRecognition()" title="按住说话">
+                        <span>🎤 开始识别</span>
+                    </button>
+                    <p class="voice-hint">点击开始说话，松开识别结果</p>
+                    <div class="voice-result" id="voiceResult" style="display: none;">
+                        <p>识别结果：<span id="voiceResultText"></span></p>
+                    </div>
+                </div>
+
+                <!-- 快捷键 -->
+                <div class="voice-section">
+                    <h4>⌨️ 快捷键</h4>
+                    <p>按 <strong>Ctrl+Shift+V</strong> 快速启动语音识别</p>
+                    <div class="shortcut-status" id="shortcutStatus">
+                        <span id="shortcutIndicator">● 已激活</span>
+                    </div>
+                </div>
+
+                <!-- 可用命令 -->
+                <div class="voice-section">
+                    <h4>📋 语音命令</h4>
+                    <div id="voiceCommandsList" class="commands-list">
+                        <!-- Commands will be loaded here -->
+                    </div>
+                </div>
+
+                <!-- 设置 -->
+                <div class="voice-section">
+                    <h4>⚙️ 语音设置</h4>
+                    <div class="voice-settings">
+                        <label class="toggle-item">
+                            <span>自动发送识别结果</span>
+                            <label class="toggle">
+                                <input type="checkbox" id="voiceAutoSend" checked>
+                                <span class="toggle-slider"></span>
+                            </label>
+                        </label>
+                        <label class="voice-setting-item">
+                            <span>识别语言</span>
+                            <select id="voiceLanguage">
+                                <option value="zh-CN">中文 (简体)</option>
+                                <option value="zh-TW">中文 (繁體)</option>
+                                <option value="en-US">English</option>
+                                <option value="ja-JP">日本語</option>
+                            </select>
+                        </label>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 文档建议面板 ==================== -->
+    <div class="suggestion-panel-modal" id="suggestionPanelModal" style="display: none;">
+        <div class="suggestion-panel">
+            <div class="panel-header">
+                <h3>📝 文档修改建议</h3>
+                <button class="close-panel" onclick="closeSuggestionPanel()">×</button>
+            </div>
+            
+            <!-- 进度区域 -->
+            <div class="suggestion-progress" id="suggestionProgress">
+                <div class="progress-bar">
+                    <div class="progress-fill" id="suggestionProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="progress-text" id="suggestionProgressText">准备分析...</div>
+            </div>
+            
+            <!-- 统计信息 -->
+            <div class="suggestion-stats" id="suggestionStats" style="display: none;">
+                <span class="stat-item">
+                    <span class="stat-value" id="totalSuggestions">0</span>
+                    <span class="stat-label">总建议</span>
+                </span>
+                <span class="stat-item">
+                    <span class="stat-value" id="acceptedCount">0</span>
+                    <span class="stat-label">已接受</span>
+                </span>
+                <span class="stat-item">
+                    <span class="stat-value" id="rejectedCount">0</span>
+                    <span class="stat-label">已拒绝</span>
+                </span>
+            </div>
+            
+            <!-- 快速操作 -->
+            <div class="suggestion-quick-actions" id="suggestionQuickActions" style="display: none;">
+                <button class="btn-sm" onclick="acceptAllSuggestions()">✓ 全部接受</button>
+                <button class="btn-sm" onclick="rejectAllSuggestions()">✗ 全部拒绝</button>
+            </div>
+            
+            <!-- 建议列表 -->
+            <div class="suggestion-list" id="suggestionList">
+                <div class="suggestion-empty">
+                    <p>🔍 正在分析文档...</p>
+                </div>
+            </div>
+            
+            <!-- 底部操作按钮 -->
+            <div class="suggestion-footer" id="suggestionFooter" style="display: none;">
+                <button class="btn-secondary" onclick="closeSuggestionPanel()">取消</button>
+                <button class="btn-primary" onclick="applySuggestions()">📥 应用修改</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 批量任务面板 ==================== -->
+    <div class="batch-panel-modal" id="batchPanelModal" style="display: none;">
+        <div class="batch-panel">
+            <div class="panel-header">
+                <h3>📋 批量任务</h3>
+                <button class="close-panel" onclick="closeBatchJobsPanel()">×</button>
+            </div>
+            <div class="batch-panel-body">
+                <div class="batch-panel-actions">
+                    <button class="ghost-btn" onclick="refreshBatchJobs()">↻ 刷新</button>
+                </div>
+                <div class="batch-jobs-list" id="batchJobsList">
+                    <div class="batch-empty">暂无任务</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 通知中心 ==================== -->
+    <div class="notification-panel-modal" id="notificationPanelModal" style="display: none;">
+        <div class="notification-panel">
+            <div class="panel-header">
+                <h3>🔔 通知中心</h3>
+                <div class="panel-header-actions">
+                    <button class="ghost-btn btn-xs" onclick="refreshNotifications()">↻ 刷新</button>
+                    <button class="ghost-btn btn-xs" onclick="markAllNotificationsRead()">✓ 全部已读</button>
+                </div>
+                <button class="close-panel" onclick="closeNotificationCenter()">×</button>
+            </div>
+            <div class="notification-panel-body">
+                <div class="notification-list" id="notificationList"></div>
+                <div class="notification-empty" id="notificationEmpty">暂无通知</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 触发器配置 ==================== -->
+    <div class="trigger-panel-modal" id="triggerPanelModal" style="display: none;">
+        <div class="trigger-panel">
+            <div class="panel-header">
+                <h3>🧭 主动触发器</h3>
+                <div class="panel-header-actions">
+                    <button class="ghost-btn btn-xs" onclick="runTriggerEvaluation()">⚡ 立即评估</button>
+                </div>
+                <button class="close-panel" onclick="closeTriggerPanel()">×</button>
+            </div>
+            <div class="trigger-panel-body">
+                <div class="trigger-actions">
+                    <button class="btn-sm" onclick="startTriggerMonitoring()">▶ 启动监控</button>
+                    <button class="btn-sm" onclick="stopTriggerMonitoring()">⏸ 停止监控</button>
+                    <div class="trigger-interval">
+                        <span>间隔(秒)</span>
+                        <input type="number" id="triggerIntervalInput" value="300" min="30" max="3600">
+                    </div>
+                </div>
+                <div class="trigger-decision" id="triggerDecision">暂无评估结果</div>
+                <div class="trigger-list" id="triggerList"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ==================== 应用框架系统 ==================== -->
+    <!-- 应用容器 -->
+    <div class="apps-container" id="appsContainer"></div>
+
+    <script src="{{ url_for('static', filename='js/auth.js') }}?v=20260615"></script>
+    <script defer src="{{ url_for('static', filename='js/app.js') }}?v=20260615"></script>
+    <script src="{{ url_for('static', filename='js/app-framework.js') }}?v=20260615"></script>
+    <script>
+        // 页面加载时淡入动画
+        document.addEventListener('DOMContentLoaded', () => {
+            if (document.body.style.opacity === '0') {
+                setTimeout(() => {
+                    document.body.style.opacity = '1';
+                }, 50);
+            }
+        });
+    </script>
+</body>
+</html>

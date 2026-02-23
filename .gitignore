@@ -1,0 +1,64 @@
+# ===== Koto .gitignore =====
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+*.egg
+dist/
+build/
+*.spec
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Secrets & API keys
+config/gemini_config.env
+config/user_settings.json
+config/user_profile.json
+config/memory.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Logs
+logs/
+*.log
+
+# Workspace user data
+workspace/
+chats/
+
+# Models (large binary files)
+models/
+
+# Build artifacts
+archive/build_logs/
+archive/installer_backup/
+*.zip
+*.exe
+
+# Large binary files
+*.fst
+*.mdl
+*.pdf
+*.pptx
+*.docx
+*.xlsx
+
+# User auth data
+config/users.json
+
+# Node modules (if any)
+node_modules/

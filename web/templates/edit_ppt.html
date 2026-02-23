@@ -1,0 +1,631 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Koto PPT 编辑器</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f5f7fa; }
+        
+        .container { display: flex; height: 100vh; }
+        
+        .sidebar {
+            width: 300px;
+            background: #fff;
+            border-right: 1px solid #e1e4e8;
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+        
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid #e1e4e8;
+            background: #f6f8fa;
+        }
+        
+        .sidebar-title { font-size: 16px; font-weight: 600; color: #333; }
+        .sidebar-subtitle { font-size: 12px; color: #666; margin-top: 8px; }
+        
+        .slides-list {
+            flex: 1;
+            padding: 10px;
+            overflow-y: auto;
+        }
+        
+        .slide-item {
+            padding: 12px;
+            margin-bottom: 8px;
+            background: #f6f8fa;
+            border: 2px solid transparent;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            user-select: none;
+        }
+        
+        .slide-item:hover { background: #eef2f7; }
+        .slide-item.active {
+            background: #fff;
+            border-color: #0366d6;
+            box-shadow: 0 0 0 3px rgba(3, 102, 214, 0.1);
+        }
+        
+        .slide-item-title { font-size: 13px; font-weight: 500; color: #333; }
+        .slide-item-type { font-size: 11px; color: #666; margin-top: 4px; }
+        
+        .editor {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 30px;
+            overflow-y: auto;
+        }
+        
+        .editor-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #e1e4e8;
+        }
+        
+        .editor-title { font-size: 24px; font-weight: 600; color: #333; }
+        
+        .editor-actions {
+            display: flex;
+            gap: 10px;
+        }
+        
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        
+        .btn-primary {
+            background: #0366d6;
+            color: white;
+        }
+        
+        .btn-primary:hover { background: #0356c3; }
+        
+        .btn-secondary {
+            background: #f6f8fa;
+            color: #333;
+            border: 1px solid #e1e4e8;
+        }
+        
+        .btn-secondary:hover { background: #eef2f7; }
+        
+        .btn-danger {
+            background: #d73a49;
+            color: white;
+        }
+        
+        .btn-danger:hover { background: #cb2431; }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 500;
+            color: #333;
+            margin-bottom: 8px;
+        }
+        
+        .form-input, .form-textarea, .form-select {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+        
+        .form-textarea {
+            min-height: 100px;
+            resize: vertical;
+        }
+        
+        .points-list {
+            margin: 15px 0;
+        }
+        
+        .point-item {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 10px;
+            align-items: flex-start;
+        }
+        
+        .point-input {
+            flex: 1;
+            padding: 8px 10px;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        
+        .btn-small {
+            padding: 6px 10px;
+            font-size: 12px;
+            background: #f6f8fa;
+            border: 1px solid #e1e4e8;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        
+        .btn-small:hover { background: #eef2f7; }
+        
+        .slide-type-badge {
+            display: inline-block;
+            padding: 2px 6px;
+            background: #0366d6;
+            color: white;
+            border-radius: 3px;
+            font-size: 11px;
+            margin-bottom: 15px;
+        }
+        
+        .loading { color: #666; font-size: 14px; }
+        .error { color: #d73a49; padding: 15px; background: #fdeaea; border-radius: 6px; }
+        .success { color: #28a745; padding: 15px; background: #e8f5e9; border-radius: 6px; }
+        
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        
+        .modal.show { display: flex; }
+        
+        .modal-content {
+            background: white;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+        
+        .modal-title { font-size: 18px; font-weight: 600; margin-bottom: 20px; }
+        
+        .modal-textarea {
+            width: 100%;
+            min-height: 200px;
+            padding: 10px;
+            border: 1px solid #e1e4e8;
+            border-radius: 6px;
+            font-size: 13px;
+            font-family: monospace;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- 侧边栏：幻灯片列表 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <div class="sidebar-title" id="ppt-title">演示文稿</div>
+                <div class="sidebar-subtitle" id="ppt-pages">0 页</div>
+            </div>
+            <div class="slides-list" id="slides-list"></div>
+            <div style="padding: 15px; border-top: 1px solid #e1e4e8;">
+                <button class="btn btn-primary" onclick="addNewSlide()" style="width: 100%;">+ 新幻灯片</button>
+            </div>
+        </div>
+        
+        <!-- 编辑区 -->
+        <div class="editor">
+            <div class="editor-header">
+                <div class="editor-title">编辑幻灯片</div>
+                <div class="editor-actions">
+                    <button class="btn btn-secondary" onclick="downloadPPT()">⬇️ 下载</button>
+                    <button class="btn btn-primary" onclick="savePPT()">💾 保存 & 渲染</button>
+                </div>
+            </div>
+            
+            <div id="editor-content">
+                <div class="loading">选择一个幻灯片进行编辑...</div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- 重新生成对话框 -->
+    <div class="modal" id="regenerate-modal">
+        <div class="modal-content">
+            <div class="modal-title">重新生成幻灯片内容</div>
+            <p style="margin-bottom: 15px; color: #666;">
+                使用 AI 重新生成该页内容。您可以自定义提示词，或使用默认提示。
+            </p>
+            <textarea class="modal-textarea" id="regenerate-prompt" placeholder="（留空使用默认提示词）"></textarea>
+            <div style="display: flex; gap: 10px;">
+                <button class="btn btn-primary" onclick="doRegenerate()" style="flex: 1;">🔄 重新生成</button>
+                <button class="btn btn-secondary" onclick="closeRegenerateModal()" style="flex: 1;">取消</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = null;
+        let currentSlideIndex = null;
+        let pptData = null;
+        
+        // 从 URL 获取 session_id
+        function initSession() {
+            const path = window.location.pathname;
+            const match = path.match(/\/edit-ppt\/([a-f0-9\-]+)/);
+            if (match) {
+                sessionId = match[1];
+                loadSession();
+            }
+        }
+        
+        async function loadSession() {
+            try {
+                const response = await fetch(`/api/ppt/session/${sessionId}`);
+                const result = await response.json();
+                
+                if (!result.success) {
+                    document.getElementById('editor-content').innerHTML = 
+                        `<div class="error">加载会话失败: ${result.error}</div>`;
+                    return;
+                }
+                
+                pptData = result.data.ppt_data;
+                updateUI();
+            } catch (err) {
+                document.getElementById('editor-content').innerHTML = 
+                    `<div class="error">加载失败: ${err.message}</div>`;
+            }
+        }
+        
+        function updateUI() {
+            if (!pptData) return;
+            
+            // 更新标题和页数
+            document.getElementById('ppt-title').textContent = pptData.title || '演示文稿';
+            document.getElementById('ppt-pages').textContent = `${pptData.slides.length} 页`;
+            
+            // 构建幻灯片列表
+            const slidesList = document.getElementById('slides-list');
+            slidesList.innerHTML = '';
+            
+            pptData.slides.forEach((slide, idx) => {
+                const item = document.createElement('div');
+                item.className = `slide-item ${idx === currentSlideIndex ? 'active' : ''}`;
+                item.onclick = () => selectSlide(idx);
+                
+                item.innerHTML = `
+                    <div class="slide-item-title">${slide.title || `幻灯片 ${idx + 1}`}</div>
+                    <div class="slide-item-type">${getSlideTypeLabel(slide.type)}</div>
+                `;
+                
+                slidesList.appendChild(item);
+            });
+            
+            // 加载当前选中的幻灯片编辑区
+            if (currentSlideIndex !== null && currentSlideIndex < pptData.slides.length) {
+                renderEditor();
+            }
+        }
+        
+        function selectSlide(idx) {
+            currentSlideIndex = idx;
+            updateUI();
+        }
+        
+        function renderEditor() {
+            if (currentSlideIndex === null || !pptData) return;
+            
+            const slide = pptData.slides[currentSlideIndex];
+            const typeLabel = getSlideTypeLabel(slide.type);
+            
+            let html = `
+                <div class="slide-type-badge">${typeLabel}</div>
+                
+                <div class="form-group">
+                    <label class="form-label">幻灯片标题</label>
+                    <input type="text" class="form-input" id="slide-title" 
+                        value="${slide.title || ''}" placeholder="输入幻灯片标题">
+                </div>
+                
+                <div class="form-group">
+                    <label class="form-label">幻灯片类型</label>
+                    <select class="form-select" id="slide-type">
+                        <option value="detail" ${slide.type === 'detail' ? 'selected' : ''}>详细（多要点）</option>
+                        <option value="overview" ${slide.type === 'overview' ? 'selected' : ''}>概览（多子主题）</option>
+                        <option value="highlight" ${slide.type === 'highlight' ? 'selected' : ''}>亮点（数据突出）</option>
+                        <option value="comparison" ${slide.type === 'comparison' ? 'selected' : ''}>对比（左右并排）</option>
+                        <option value="divider" ${slide.type === 'divider' ? 'selected' : ''}>过渡（分隔）</option>
+                    </select>
+                </div>
+            `;
+            
+            if (slide.type === 'divider') {
+                html += `
+                    <div class="form-group">
+                        <label class="form-label">过渡描述</label>
+                        <textarea class="form-textarea" id="slide-description" 
+                            placeholder="输入过渡页描述">${slide.description || ''}</textarea>
+                    </div>
+                `;
+            } else if (slide.type === 'overview' || slide.type === 'comparison') {
+                html += renderSubsectionsEditor(slide);
+            } else {
+                html += renderPointsEditor(slide);
+            }
+            
+            html += `
+                <div style="display: flex; gap: 10px; margin-top: 30px;">
+                    <button class="btn btn-primary" onclick="updateCurrentSlide()">✅ 保存编辑</button>
+                    <button class="btn btn-secondary" onclick="openRegenerateModal()">🔄 AI 重新生成</button>
+                    <button class="btn btn-danger" onclick="deleteCurrentSlide()">🗑️ 删除</button>
+                </div>
+            `;
+            
+            document.getElementById('editor-content').innerHTML = html;
+        }
+        
+        function renderPointsEditor(slide) {
+            const points = slide.points || slide.content || [];
+            let html = `
+                <div class="form-group">
+                    <label class="form-label">要点内容</label>
+                    <div class="points-list" id="points-list">
+            `;
+            
+            points.forEach((point, idx) => {
+                html += `
+                    <div class="point-item">
+                        <input type="text" class="point-input" value="${point}" 
+                            onchange="updatePoint(${idx}, this.value)">
+                        <button class="btn-small" onclick="deletePoint(${idx})">删除</button>
+                    </div>
+                `;
+            });
+            
+            html += `
+                    </div>
+                    <button class="btn btn-secondary" onclick="addPoint()">+ 添加要点</button>
+                </div>
+            `;
+            
+            return html;
+        }
+        
+        function renderSubsectionsEditor(slide) {
+            const subs = slide.subsections || [];
+            let html = `<div class="form-group"><label class="form-label">子主题与要点</label>`;
+            
+            subs.forEach((sub, sidx) => {
+                html += `
+                    <div style="background: #f6f8fa; padding: 15px; border-radius: 6px; margin-bottom: 15px;">
+                        <input type="text" class="form-input" value="${sub.subtitle || ''}" 
+                            placeholder="子主题标题" style="margin-bottom: 10px;"
+                            onchange="updateSubtitle(${sidx}, this.value)">
+                        <div class="points-list">
+                `;
+                
+                (sub.points || []).forEach((point, pidx) => {
+                    html += `
+                        <div class="point-item">
+                            <input type="text" class="point-input" value="${point}"
+                                onchange="updateSubPoint(${sidx}, ${pidx}, this.value)">
+                            <button class="btn-small" onclick="deleteSubPoint(${sidx}, ${pidx})">删除</button>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                        <button class="btn btn-secondary" style="font-size: 12px; width: 100%; margin-top: 10px;"
+                            onclick="addSubPoint(${sidx})">+ 添加要点</button>
+                    </div>
+                `;
+            });
+            
+            html += `<button class="btn btn-secondary" onclick="addSubsection()">+ 添加子主题</button></div>`;
+            return html;
+        }
+        
+        // 编辑操作
+        function updateCurrentSlide() {
+            if (!pptData || currentSlideIndex === null) return;
+            
+            const slide = pptData.slides[currentSlideIndex];
+            slide.title = document.getElementById('slide-title').value;
+            slide.type = document.getElementById('slide-type').value;
+            
+            if (slide.type === 'divider' && document.getElementById('slide-description')) {
+                slide.description = document.getElementById('slide-description').value;
+            }
+            
+            updateUI();
+            showMessage('幻灯片已更新', 'success');
+        }
+        
+        function updatePoint(idx, value) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.points) slide.points[idx] = value;
+            if (slide.content) slide.content[idx] = value;
+        }
+        
+        function addPoint() {
+            const slide = pptData.slides[currentSlideIndex];
+            if (!slide.points) slide.points = [];
+            if (!slide.content) slide.content = [];
+            slide.points.push('新要点');
+            slide.content.push('新要点');
+            renderEditor();
+        }
+        
+        function deletePoint(idx) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.points) slide.points.splice(idx, 1);
+            if (slide.content) slide.content.splice(idx, 1);
+            renderEditor();
+        }
+        
+        function updateSubtitle(sidx, value) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.subsections) slide.subsections[sidx].subtitle = value;
+        }
+        
+        function updateSubPoint(sidx, pidx, value) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.subsections) slide.subsections[sidx].points[pidx] = value;
+        }
+        
+        function deleteSubPoint(sidx, pidx) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.subsections) slide.subsections[sidx].points.splice(pidx, 1);
+            renderEditor();
+        }
+        
+        function addSubPoint(sidx) {
+            const slide = pptData.slides[currentSlideIndex];
+            if (slide.subsections) slide.subsections[sidx].points.push('新要点');
+            renderEditor();
+        }
+        
+        function addSubsection() {
+            const slide = pptData.slides[currentSlideIndex];
+            if (!slide.subsections) slide.subsections = [];
+            slide.subsections.push({ subtitle: '新子主题', points: ['要点 1'] });
+            renderEditor();
+        }
+        
+        function deleteCurrentSlide() {
+            if (!confirm('确定要删除这个幻灯片吗？')) return;
+            pptData.slides.splice(currentSlideIndex, 1);
+            currentSlideIndex = Math.max(0, currentSlideIndex - 1);
+            if (pptData.slides.length === 0) currentSlideIndex = null;
+            updateUI();
+            showMessage('幻灯片已删除', 'success');
+        }
+        
+        function addNewSlide() {
+            pptData.slides.push({
+                title: '新幻灯片',
+                type: 'detail',
+                points: ['要点 1'],
+                content: ['要点 1']
+            });
+            currentSlideIndex = pptData.slides.length - 1;
+            updateUI();
+        }
+        
+        // AI 重新生成
+        function openRegenerateModal() {
+            document.getElementById('regenerate-modal').classList.add('show');
+        }
+        
+        function closeRegenerateModal() {
+            document.getElementById('regenerate-modal').classList.remove('show');
+            document.getElementById('regenerate-prompt').value = '';
+        }
+        
+        async function doRegenerate() {
+            if (currentSlideIndex === null) return;
+            
+            const customPrompt = document.getElementById('regenerate-prompt').value;
+            
+            try {
+                const response = await fetch(
+                    `/api/ppt/regenerate/${sessionId}/${currentSlideIndex}`,
+                    {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ prompt: customPrompt || null })
+                    }
+                );
+                
+                const result = await response.json();
+                if (result.success) {
+                    // 刷新会话数据
+                    await loadSession();
+                    selectSlide(currentSlideIndex);
+                    closeRegenerateModal();
+                    showMessage('幻灯片已重新生成', 'success');
+                } else {
+                    showMessage(`生成失败: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`生成错误: ${err.message}`, 'error');
+            }
+        }
+        
+        // 保存和下载
+        async function savePPT() {
+            try {
+                // 先更新当前编辑的幻灯片
+                updateCurrentSlide();
+                
+                // 调用重新渲染 API
+                const response = await fetch(`/api/ppt/render/${sessionId}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ theme: 'business' })
+                });
+                
+                const result = await response.json();
+                if (result.success) {
+                    showMessage('PPT 文件已生成', 'success');
+                } else {
+                    showMessage(`保存失败: ${result.error}`, 'error');
+                }
+            } catch (err) {
+                showMessage(`保存错误: ${err.message}`, 'error');
+            }
+        }
+        
+        async function downloadPPT() {
+            window.location.href = `/api/ppt/download/${sessionId}`;
+        }
+        
+        function showMessage(text, type) {
+            const editor = document.getElementById('editor-content');
+            const msg = document.createElement('div');
+            msg.className = type;
+            msg.textContent = text;
+            msg.style.position = 'fixed';
+            msg.style.top = '20px';
+            msg.style.right = '20px';
+            msg.style.zIndex = '2000';
+            document.body.appendChild(msg);
+            setTimeout(() => msg.remove(), 3000);
+        }
+        
+        function getSlideTypeLabel(type) {
+            const labels = {
+                detail: '详细页',
+                overview: '概览页',
+                highlight: '亮点页',
+                comparison: '对比页',
+                divider: '过渡页'
+            };
+            return labels[type] || type;
+        }
+        
+        // 初始化
+        initSession();
+    </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+PySide6
+google-genai
+python-dotenv
+requests
+httpx
+pyinstaller
+pandas
+openpyxl

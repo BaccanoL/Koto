@@ -1,0 +1,276 @@
+"""
+Koto Auth - 用户认证与会话管理
+支持 JWT token 认证，用于 SaaS 部署
+"""
+import os
+import json
+import time
+import hashlib
+import secrets
+from pathlib import Path
+from functools import wraps
+from datetime import datetime, timedelta
+
+# JWT 依赖（可选降级到简单 token）
+try:
+    import jwt
+    HAS_JWT = True
+except ImportError:
+    HAS_JWT = False
+
+from flask import request, jsonify, g
+
+
+# ── 配置 ──
+AUTH_ENABLED = os.environ.get("KOTO_AUTH_ENABLED", "false").lower() == "true"
+JWT_SECRET = os.environ.get("KOTO_JWT_SECRET", secrets.token_hex(32))
+JWT_EXPIRY_HOURS = int(os.environ.get("KOTO_JWT_EXPIRY_HOURS", "72"))
+USERS_FILE = os.environ.get("KOTO_USERS_FILE", "config/users.json")
+MAX_DAILY_REQUESTS = int(os.environ.get("KOTO_MAX_DAILY_REQUESTS", "100"))
+ADMIN_TOKEN = os.environ.get("KOTO_ADMIN_TOKEN", "")
+
+
+def _hash_password(password: str, salt: str = None) -> tuple:
+    """安全密码哈希"""
+    if salt is None:
+        salt = secrets.token_hex(16)
+    hashed = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), 100000)
+    return hashed.hex(), salt
+
+
+def _load_users() -> dict:
+    """加载用户数据"""
+    if not os.path.exists(USERS_FILE):
+        return {}
+    try:
+        with open(USERS_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except:
+        return {}
+
+
+def _save_users(users: dict):
+    """保存用户数据"""
+    os.makedirs(os.path.dirname(USERS_FILE) or ".", exist_ok=True)
+    with open(USERS_FILE, "w", encoding="utf-8") as f:
+        json.dump(users, f, ensure_ascii=False, indent=2)
+
+
+def _generate_token(user_id: str, email: str) -> str:
+    """生成 JWT token"""
+    payload = {
+        "user_id": user_id,
+        "email": email,
+        "iat": int(time.time()),
+        "exp": int(time.time()) + JWT_EXPIRY_HOURS * 3600,
+    }
+    if HAS_JWT:
+        return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    else:
+        # 简单 token 降级
+        import base64
+        token_data = json.dumps(payload).encode()
+        sig = hashlib.sha256(token_data + JWT_SECRET.encode()).hexdigest()[:16]
+        return base64.urlsafe_b64encode(token_data).decode() + "." + sig
+
+
+def _verify_token(token: str) -> dict:
+    """验证 JWT token，返回 payload 或 None"""
+    if not token:
+        return None
+    try:
+        if HAS_JWT:
+            return jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+        else:
+            import base64
+            parts = token.rsplit(".", 1)
+            if len(parts) != 2:
+                return None
+            token_data = base64.urlsafe_b64decode(parts[0])
+            sig = hashlib.sha256(token_data + JWT_SECRET.encode()).hexdigest()[:16]
+            if sig != parts[1]:
+                return None
+            payload = json.loads(token_data)
+            if payload.get("exp", 0) < time.time():
+                return None
+            return payload
+    except:
+        return None
+
+
+# ── 请求频率限制 ──
+_rate_limits = {}  # { user_id: { "date": "2026-02-23", "count": 42 } }
+
+
+def _check_rate_limit(user_id: str) -> bool:
+    """检查用户今日请求是否超限"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if user_id not in _rate_limits or _rate_limits[user_id]["date"] != today:
+        _rate_limits[user_id] = {"date": today, "count": 0}
+    return _rate_limits[user_id]["count"] < MAX_DAILY_REQUESTS
+
+
+def _increment_request(user_id: str):
+    """增加请求计数"""
+    today = datetime.now().strftime("%Y-%m-%d")
+    if user_id not in _rate_limits or _rate_limits[user_id]["date"] != today:
+        _rate_limits[user_id] = {"date": today, "count": 0}
+    _rate_limits[user_id]["count"] += 1
+
+
+# ── Flask 中间件 ──
+
+def require_auth(f):
+    """装饰器：需要认证的路由"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not AUTH_ENABLED:
+            g.user_id = "local"
+            g.user_email = "local@koto.ai"
+            return f(*args, **kwargs)
+
+        # 从 header 或 cookie 获取 token
+        token = None
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+        if not token:
+            token = request.cookies.get("koto_token")
+
+        payload = _verify_token(token)
+        if not payload:
+            return jsonify({"error": "未登录或登录已过期", "code": "UNAUTHORIZED"}), 401
+
+        user_id = payload.get("user_id", "")
+        
+        # 频率限制
+        if not _check_rate_limit(user_id):
+            return jsonify({
+                "error": f"今日请求已达上限 ({MAX_DAILY_REQUESTS}次)",
+                "code": "RATE_LIMIT"
+            }), 429
+
+        _increment_request(user_id)
+        g.user_id = user_id
+        g.user_email = payload.get("email", "")
+        return f(*args, **kwargs)
+
+    return decorated
+
+
+def optional_auth(f):
+    """装饰器：可选认证（本地模式不需要，云模式需要）"""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if not AUTH_ENABLED:
+            g.user_id = "local"
+            g.user_email = "local@koto.ai"
+            return f(*args, **kwargs)
+        return require_auth(f)(*args, **kwargs)
+    return decorated
+
+
+# ── Auth API 路由注册 ──
+
+def register_auth_routes(app):
+    """注册认证相关的 API 路由"""
+
+    @app.route("/api/auth/register", methods=["POST"])
+    def auth_register():
+        """用户注册"""
+        if not AUTH_ENABLED:
+            return jsonify({"error": "本地模式无需注册"}), 400
+
+        data = request.get_json(force=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password", "")
+        name = data.get("name", "").strip()
+
+        if not email or "@" not in email:
+            return jsonify({"error": "请输入有效的邮箱地址"}), 400
+        if len(password) < 6:
+            return jsonify({"error": "密码至少6位"}), 400
+
+        users = _load_users()
+        if email in users:
+            return jsonify({"error": "该邮箱已注册"}), 409
+
+        hashed, salt = _hash_password(password)
+        user_id = secrets.token_hex(8)
+        users[email] = {
+            "user_id": user_id,
+            "name": name or email.split("@")[0],
+            "password_hash": hashed,
+            "salt": salt,
+            "created_at": datetime.now().isoformat(),
+            "plan": "free",
+            "daily_limit": MAX_DAILY_REQUESTS,
+        }
+        _save_users(users)
+
+        token = _generate_token(user_id, email)
+        return jsonify({
+            "success": True,
+            "token": token,
+            "user": {"user_id": user_id, "email": email, "name": users[email]["name"], "plan": "free"}
+        })
+
+    @app.route("/api/auth/login", methods=["POST"])
+    def auth_login():
+        """用户登录"""
+        if not AUTH_ENABLED:
+            return jsonify({"success": True, "token": "local", "user": {"user_id": "local", "email": "local@koto.ai", "name": "Local User", "plan": "unlimited"}})
+
+        data = request.get_json(force=True) or {}
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password", "")
+
+        users = _load_users()
+        user = users.get(email)
+        if not user:
+            return jsonify({"error": "邮箱或密码错误"}), 401
+
+        hashed, _ = _hash_password(password, user["salt"])
+        if hashed != user["password_hash"]:
+            return jsonify({"error": "邮箱或密码错误"}), 401
+
+        token = _generate_token(user["user_id"], email)
+        return jsonify({
+            "success": True,
+            "token": token,
+            "user": {"user_id": user["user_id"], "email": email, "name": user["name"], "plan": user.get("plan", "free")}
+        })
+
+    @app.route("/api/auth/me", methods=["GET"])
+    @require_auth
+    def auth_me():
+        """获取当前用户信息"""
+        users = _load_users()
+        for email, user in users.items():
+            if user["user_id"] == g.user_id:
+                today = datetime.now().strftime("%Y-%m-%d")
+                used = _rate_limits.get(g.user_id, {}).get("count", 0) if _rate_limits.get(g.user_id, {}).get("date") == today else 0
+                return jsonify({
+                    "user_id": g.user_id,
+                    "email": email,
+                    "name": user["name"],
+                    "plan": user.get("plan", "free"),
+                    "daily_limit": user.get("daily_limit", MAX_DAILY_REQUESTS),
+                    "used_today": used,
+                })
+        return jsonify({"user_id": g.user_id, "email": g.user_email, "plan": "free"})
+
+    @app.route("/api/auth/logout", methods=["POST"])
+    def auth_logout():
+        """登出（客户端清除 token 即可）"""
+        return jsonify({"success": True})
+
+    @app.route("/api/auth/status", methods=["GET"])
+    def auth_status():
+        """返回认证系统状态（供前端判断是否需要登录）"""
+        return jsonify({
+            "auth_enabled": AUTH_ENABLED,
+            "mode": "cloud" if AUTH_ENABLED else "local",
+        })
+
+    print(f"[Auth] {'✅ 认证系统已启用' if AUTH_ENABLED else '⚠️ 本地模式（无认证）'}")
