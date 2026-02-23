@@ -3730,6 +3730,9 @@ class LocalDispatcher:
     
     @staticmethod
     def is_ollama_running():
+        # 云端模式下禁用 Ollama（云服务器无本地 GPU）
+        if os.environ.get('KOTO_DEPLOY_MODE') == 'cloud':
+            return False
         try:
             requests.get("http://localhost:11434", timeout=0.2)
             return True
@@ -12091,6 +12094,9 @@ if __name__ == '__main__':
     # 延迟检查 Ollama 状态（不阻塞启动）
     def check_ollama_async():
         time.sleep(2)  # 延迟2秒后检查
+        if os.environ.get('KOTO_DEPLOY_MODE') == 'cloud':
+            print("☁️ Ollama: Disabled (cloud mode - using Gemini API)")
+            return
         if LocalDispatcher.is_ollama_running():
             print("🦙 Ollama: Running")
         else:

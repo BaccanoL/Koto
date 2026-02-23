@@ -210,32 +210,16 @@ class FileAnalyzer:
         }
     
     def _ai_classify(self, file_name: str, content: str, file_type: str) -> Optional[Dict]:
-        """使用本地 Ollama 模型 (qwen3:8b) 进行智能文件分类
+        """使用 AI 模型进行智能文件分类
         
+        本地模式：使用 Ollama + Qwen3（更快、免费）
+        云端模式：使用 Gemini API（无需本地 GPU）
         当规则引擎置信度低时自动调用，利用 AI 理解文件语义。
         """
         import time
+        import os
         
-        # 检查 Ollama 可用性（缓存 60 秒）
-        now = time.time()
-        if self._ai_available is not None and (now - self._ai_check_time) < 60:
-            if not self._ai_available:
-                return None
-        
-        try:
-            import socket
-            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.settimeout(0.2)
-            result = sock.connect_ex(('127.0.0.1', 11434))
-            sock.close()
-            FileAnalyzer._ai_available = (result == 0)
-            FileAnalyzer._ai_check_time = now
-            if not FileAnalyzer._ai_available:
-                return None
-        except Exception:
-            FileAnalyzer._ai_available = False
-            FileAnalyzer._ai_check_time = now
-            return None
+        is_cloud = os.environ.get('KOTO_DEPLOY_MODE') == 'cloud'
         
         # 构建文件摘要（给 AI 的上下文）
         content_preview = (content or "")[:800].strip()
@@ -246,32 +230,95 @@ class FileAnalyzer:
             "career", "media", "medical", "education", "projects", "property", "other"
         ]
         
+        raw = None
+        
+        if is_cloud:
+            # ═══ 云端模式：使用 Gemini API ═══
+            try:
+                from google import genai as _genai
+                from google.genai import types as _types
+                
+                api_key = os.environ.get('GEMINI_API_KEY') or os.environ.get('API_KEY')
+                if not api_key:
+                    return None
+                
+                _client = _genai.Client(api_key=api_key)
+                resp = _client.models.generate_content(
+                    model="gemini-2.0-flash",
+                    contents=f"{self.AI_CLASSIFY_PROMPT}\n\n{user_msg}",
+                    config=_types.GenerateContentConfig(
+                        temperature=0.0,
+                        max_output_tokens=200,
+                    )
+                )
+                raw = (resp.text or "").strip()
+            except Exception as e:
+                print(f"[FileAnalyzer AI/Cloud] ❌ Gemini 分类失败: {e}")
+                return None
+        else:
+            # ═══ 本地模式：使用 Ollama ═══
+            # 检查 Ollama 可用性（缓存 60 秒）
+            now = time.time()
+            if self._ai_available is not None and (now - self._ai_check_time) < 60:
+                if not self._ai_available:
+                    return None
+            
+            try:
+                import socket
+                sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                sock.settimeout(0.2)
+                result = sock.connect_ex(('127.0.0.1', 11434))
+                sock.close()
+                FileAnalyzer._ai_available = (result == 0)
+                FileAnalyzer._ai_check_time = now
+                if not FileAnalyzer._ai_available:
+                    return None
+            except Exception:
+                FileAnalyzer._ai_available = False
+                FileAnalyzer._ai_check_time = now
+                return None
+            
+            try:
+                resp = requests.post(
+                    f"{self.OLLAMA_URL}/api/chat",
+                    json={
+                        "model": self.AI_MODEL,
+                        "messages": [
+                            {"role": "system", "content": self.AI_CLASSIFY_PROMPT},
+                            {"role": "user", "content": user_msg},
+                        ],
+                        "stream": False,
+                        "format": "json",
+                        "think": False,  # Qwen3: 禁用思考，加速分类
+                        "options": {
+                            "temperature": 0.0,
+                            "num_predict": 120,
+                        }
+                    },
+                    timeout=8.0
+                )
+                
+                if resp.status_code != 200:
+                    return None
+                
+                raw = (resp.json().get("message", {}) or {}).get("content", "")
+            except requests.exceptions.Timeout:
+                print(f"[FileAnalyzer AI] ⏱️ 超时: {file_name[:30]}")
+                return None
+            except Exception as e:
+                print(f"[FileAnalyzer AI] ❌ Ollama 错误: {e}")
+                return None
+        
+        # ═══ 解析 AI 返回的 JSON ═══
+        if not raw:
+            return None
+        
         try:
-            resp = requests.post(
-                f"{self.OLLAMA_URL}/api/chat",
-                json={
-                    "model": self.AI_MODEL,
-                    "messages": [
-                        {"role": "system", "content": self.AI_CLASSIFY_PROMPT},
-                        {"role": "user", "content": user_msg},
-                    ],
-                    "stream": False,
-                    "format": "json",
-                    "think": False,  # Qwen3: 禁用思考，加速分类
-                    "options": {
-                        "temperature": 0.0,
-                        "num_predict": 120,
-                    }
-                },
-                timeout=8.0
-            )
-            
-            if resp.status_code != 200:
-                return None
-            
-            raw = (resp.json().get("message", {}) or {}).get("content", "")
-            if not raw:
-                return None
+            # 尝试提取 JSON（Gemini 可能返回 markdown 代码块）
+            import re as _re
+            json_match = _re.search(r'\{[^{}]+\}', raw)
+            if json_match:
+                raw = json_match.group()
             
             data = json.loads(raw.strip())
             industry = str(data.get("industry", "")).strip().lower()
@@ -292,19 +339,16 @@ class FileAnalyzer:
             if confidence < 0.3:
                 confidence = 0.6  # AI 给出结果视为至少 0.6 置信度
             
-            print(f"[FileAnalyzer AI] ✅ {file_name[:30]} → {industry}/{category} ({confidence:.2f}) entity={entity}")
+            source = "Cloud/Gemini" if is_cloud else "Local/Ollama"
+            print(f"[FileAnalyzer AI] ✅ {file_name[:30]} → {industry}/{category} ({confidence:.2f}) entity={entity} [{source}]")
             return {
                 "industry": industry,
                 "category": category,
                 "entity": entity if entity else None,
                 "confidence": confidence,
             }
-            
-        except requests.exceptions.Timeout:
-            print(f"[FileAnalyzer AI] ⏱️ 超时: {file_name[:30]}")
-            return None
         except Exception as e:
-            print(f"[FileAnalyzer AI] ❌ 错误: {e}")
+            print(f"[FileAnalyzer AI] ❌ JSON 解析错误: {e}")
             return None
 
     def _extract_content(self, file_path: str) -> str:

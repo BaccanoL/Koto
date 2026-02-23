@@ -106,6 +106,11 @@ class LocalModelRouter:
     @classmethod
     def is_ollama_available(cls) -> bool:
         """检查 Ollama 是否可用（带缓存，避免频繁检测）"""
+        import os
+        # 云端模式下禁用 Ollama（云服务器没有本地 GPU）
+        if os.environ.get('KOTO_DEPLOY_MODE') == 'cloud':
+            cls._available = False
+            return False
         
         # 缓存 30 秒
         if cls._available is not None and (time.time() - cls._check_time) < 30:
